@@ -581,7 +581,7 @@ func ExpirationHttpsDomain() (_err error) {
 	// 添加 labels 部分
 	templateString.WriteString("  labels:\n")
 	templateString.WriteString("    group: web\n")
-	templateString.WriteString("    department: zhumang-auto\n")
+	templateString.WriteString("    department: test-auto\n")
 
 	// 将模板字符串写入到文件中
 	_, err = templateFile.WriteString(templateString.String())
