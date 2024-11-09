@@ -10,6 +10,14 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	alidns "github.com/alibabacloud-go/alidns-20150109/v2/client"
+	aliopenapi "github.com/alibabacloud-go/darabonba-openapi/client"
+	"github.com/alibabacloud-go/tea/tea"
+	"github.com/spf13/viper"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
+	dnspod "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/dnspod/v20210323"
 	"io/ioutil"
 	"log"
 	"net"
@@ -18,14 +26,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	alidns "github.com/alibabacloud-go/alidns-20150109/v2/client"
-	aliopenapi "github.com/alibabacloud-go/darabonba-openapi/client"
-	"github.com/alibabacloud-go/tea/tea"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
-	dnspod "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/dnspod/v20210323"
 )
 
 // 定义变量或初始化
@@ -85,6 +85,18 @@ func init() {
 		// 如果文件成功打开，初始化logger
 		infologger = log.New(infologFile, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 	}
+
+	// 初始化setpStatusMap并设置默认值，只要后续流程没有重写这些值，那么相应阶段就是执行失败
+	setpStatusMap = make(map[string][]string)
+	setpStatusMap["aliyunInitStatus"] = []string{"执行失败", "red"}
+	setpStatusMap["aliyunDescribeDomainsStatus"] = []string{"执行失败", "red"}
+	setpStatusMap["aliyunDescribeDomainRecordsStatus"] = []string{"执行失败", "red"}
+	setpStatusMap["tencentInitStatus"] = []string{"执行失败", "red"}
+	setpStatusMap["tencentDescribeDomainsStatus"] = []string{"执行失败", "red"}
+	setpStatusMap["tencentDescribeDomainRecordsStatus"] = []string{"执行失败", "red"}
+	setpStatusMap["expirationHttpsDomainStatus"] = []string{"执行失败", "red"}
+	setpStatusMap["reloadPrometheusStatus"] = []string{"执行失败", "red"}
+	setpStatusMap["aliyunInitStatus"] = []string{"执行失败", "red"}
 }
 
 /**
@@ -103,7 +115,27 @@ func preClose() {
 }
 
 /**
-* Init 初始化阿里云SDK
+* 初始化配置文件
+ * @return error
+*/
+func GetConfig() (_err error) {
+	viper.SetConfigName("config")
+	viper.AddConfigPath("./config")
+	viper.SetConfigType("yml")
+
+	// 读取配置文件, 如果出错则退出
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Printf("Error reading config file, %s\n", err)
+		return err
+	}
+
+	// 获取配置值
+	//aliyun_key := viper.GetString("cloud.alibaba.aliyun_key") // 读取字符串
+	return nil
+}
+
+/**
+* 初始化阿里云SDK
  * @param accessKeyId
  * @param accessKeySecret
  * @return *alidns.Client
@@ -123,7 +155,7 @@ func AliyunInit(accessKeyId *string, accessKeySecret *string, regionId *string) 
 }
 
 /**
-* Init 初始化腾讯云SDK
+* 初始化腾讯云SDK
  * @param secretId
  * @param secretKey
  * @return *dnspod.Client
@@ -154,13 +186,13 @@ func TencentInit(secretId string, secretKey string) (txdnsClient *dnspod.Client,
 func ClientInit() (aliyunClient *alidns.Client, tencentClient *dnspod.Client, _err error) {
 
 	// 阿里云密钥
-	aliyunAccessKeyId := ""
-	aliyunAccessKeySecret := ""
-	regionId := "cn-shenzhen"
+	aliyunAccessKeyId := viper.GetString("cloud.alibaba.aliyun_key")
+	aliyunAccessKeySecret := viper.GetString("cloud.alibaba.aliyun_secret")
+	regionId := viper.GetString("cloud.alibaba.region")
 
 	// 腾讯云密钥
-	tencentSecretId := ""
-	tencentSecretKey := ""
+	tencentSecretId := viper.GetString("cloud.tencent.tencent_key")
+	tencentSecretKey := viper.GetString("cloud.tencent.tencent_secret")
 
 	// 初始阿里云化客户端
 	ailClient, _err := AliyunInit(&aliyunAccessKeyId, &aliyunAccessKeySecret, &regionId)
@@ -237,10 +269,6 @@ func TencentDescribeDomains(client *dnspod.Client) (_err error) {
 
 	// 返回的resp是一个DescribeDomainListResponse的实例，与请求对象对应
 	response, err := client.DescribeDomainList(request)
-	if _, ok := err.(*errors.TencentCloudSDKError); ok {
-		errlogger.Printf("腾讯云API调用错误: %v", err)
-		return
-	}
 	if err != nil {
 		return err
 	}
@@ -478,7 +506,7 @@ func ExpirationHttpsDomain() (_err error) {
 	defer domainFile.Close()
 
 	// 清空template.yml文件，用于生成blackbox-exporter的配置文件（只部分片段）
-	templateFile, err := os.OpenFile("/opt/prometheus/blackbox/http/aliyun-tencent-httpsdomain.yml", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	templateFile, err := os.OpenFile("aliyun-tencent-httpsdomain.yml", os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		errlogger.Printf("打开、创建获取清理httpsdomain.yml文件异常: %v", err)
 		return _err
@@ -597,7 +625,7 @@ func ExpirationHttpsDomain() (_err error) {
 */
 func ReloadPrometheus() (_err error) {
 	// 要请求的URL
-	url := "http://127.0.0.1:9090/-/reload"
+	url := viper.GetString("api.prometheus_api")
 
 	// 创建一个空的POST请求
 	resp, _err := http.Post(url, "application/json", nil)
@@ -629,7 +657,7 @@ func ReloadPrometheus() (_err error) {
 func NoticeWeCom(httpsDomainSum int, setpStatusMap map[string][]string) (_err error) {
 
 	// 企业微信Webhook URL
-	url := "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=11111111-222-333-333-333333333"
+	url := viper.GetString("api.wx_api")
 
 	// 准备Markdown消息内容
 	markdownMessage := func() string {
@@ -723,26 +751,31 @@ func NoticeWeCom(httpsDomainSum int, setpStatusMap map[string][]string) (_err er
 }
 
 /**
-* 发送通知
- * @return error
-*/
-func sendNotice() (_err error) {
-	// 调用企业微信接口
-	_err = NoticeWeCom(httpsDomainSum, setpStatusMap)
-	if _err != nil {
-		return _err
-	}
-	return nil
-}
-
-/**
 * 主要执行入口(被main主函数调用)
  * @return error
 */
 func _main() (_err error) {
 
-	// 函数退出之前发送通知
-	defer sendNotice()
+	// 匿名函数：退出之前发送通知
+	defer func() (_err error) {
+		_err = NoticeWeCom(httpsDomainSum, setpStatusMap)
+		if _err != nil {
+			errlogger.Printf("发送通知失败: %v", _err)
+			return _err
+		} else {
+			infologger.Printf("发送通知成功")
+		}
+		return nil
+	}()
+
+	// 加载配置文件
+	_err = GetConfig()
+	if _err != nil {
+		errlogger.Printf("加载配置文件失败: %v", _err)
+		return _err
+	} else {
+		infologger.Printf("加载配置文件成功")
+	}
 
 	// 1、初始化阿里云和腾讯云SDK
 	aliyunClient, tencentClient, _err := ClientInit()
@@ -766,7 +799,7 @@ func _main() (_err error) {
 		infologger.Printf("调用域名列表接口:执行完成")
 	}
 
-	// 2.查询域名解析记录
+	// 3.查询域名解析记录
 	_err = DescribeDomainRecords(aliyunClient, tencentClient)
 	if _err != nil {
 		setpStatusMap["describeDomainRecordsStatus"] = []string{failText, failColor}
@@ -777,7 +810,7 @@ func _main() (_err error) {
 		infologger.Printf("调用域名解析接口:执行完成")
 	}
 
-	// 3.检查https域名到期时间
+	// 4.检查https域名到期时间
 	// 让程序暂停 3 秒
 	time.Sleep(3 * time.Second)
 	_err = ExpirationHttpsDomain()
@@ -790,7 +823,7 @@ func _main() (_err error) {
 		infologger.Printf("检查HTTPS域名到期时间:执行完成")
 	}
 
-	// 4.Reload Prometheus
+	// 5.Reload Prometheus
 	// 让程序暂停 3 秒
 	time.Sleep(3 * time.Second)
 	_err = ReloadPrometheus()
@@ -809,18 +842,6 @@ func _main() (_err error) {
 func main() {
 	// 关闭日志文件
 	defer preClose()
-
-	// 初始化setpStatusMap并设置默认值，只要后续流程没有重写这些值，那么相应阶段就是执行失败
-	setpStatusMap = make(map[string][]string)
-	setpStatusMap["aliyunInitStatus"] = []string{"执行失败", "red"}
-	setpStatusMap["aliyunDescribeDomainsStatus"] = []string{"执行失败", "red"}
-	setpStatusMap["aliyunDescribeDomainRecordsStatus"] = []string{"执行失败", "red"}
-	setpStatusMap["tencentInitStatus"] = []string{"执行失败", "red"}
-	setpStatusMap["tencentDescribeDomainsStatus"] = []string{"执行失败", "red"}
-	setpStatusMap["tencentDescribeDomainRecordsStatus"] = []string{"执行失败", "red"}
-	setpStatusMap["expirationHttpsDomainStatus"] = []string{"执行失败", "red"}
-	setpStatusMap["reloadPrometheusStatus"] = []string{"执行失败", "red"}
-	setpStatusMap["aliyunInitStatus"] = []string{"执行失败", "red"}
 
 	// 由于_main先执行，它返回错误就会中断程序
 	err := _main()
