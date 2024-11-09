@@ -1,0 +1,11 @@
+cloud:
+  alibaba:
+    aliyun_key: ""
+    aliyun_secret: ""
+    region: "cn-shenzhen"
+  tencent:
+    tencent_key: ""
+    tencent_secret: ""
+api:
+  wx_api: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=11223344-2222-5555-1234-888ba20cgbgb"
+  prometheus_api: "http://127.0.0.1:9090/-/reload"
